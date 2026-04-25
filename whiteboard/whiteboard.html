@@ -502,7 +502,7 @@ body {
       <header class="top-bar">
         <div class="top-bar__title-wrap">
           <span class="top-bar__title">Gaurav's Board</span>
-          <span class="top-bar__logo" aria-hidden="true" style="display:inline-grid;place-items:center;height:1.75rem;min-width:1.75rem;padding:0 0.5rem;border-radius:999px;background:#111827;color:#e5e7eb;font-size:0.8rem;font-weight:700;letter-spacing:0.02em">WB</span>
+          <img class="top-bar__logo" src="assets/logo.png" alt="" role="presentation" />
         </div>
         <div class="top-bar__spacer"></div>
         <button class="top-bar__button" id="clearPageButton" title="Clear everything on this page">
@@ -887,7 +887,6 @@ body {
   let activeSelectionBox = null;
   let resizeState = null; // { kind: "shape"|"text", shape?, text?, corner, startBounds?, startBoundsText? }
   let lastTextTap = { time: 0, item: null };
-  let coarseTextDragDeferredUndo = false; /* tablet: defer pushUndo until finger moves; tap opens editor */
   let activeTouchId = null; /* for tablet: track touch so touchmove/touchend use same finger */
   let pinchStartDistance = null;
   let pinchStartZoom = 1;
@@ -5144,14 +5143,6 @@ body {
     }
   }
 
-  function prefersCoarsePointer() {
-    try {
-      return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
-    } catch (_) {
-      return false;
-    }
-  }
-
   function placeList(point) {
     const page = pages[currentPageIndex];
     if (!page) return;
@@ -5184,10 +5175,6 @@ body {
     });
     updateBoardAppearance();
     if (propertiesContent) handleToolSelection("select");
-    /* Tablet: touch uses synthetic events; opening editor avoids “selection only” with no keyboard */
-    if (prefersCoarsePointer()) {
-      requestAnimationFrame(() => openEditTextInput(item));
-    }
   }
 
   function getWidgetDisplayText(widget) {
@@ -6273,7 +6260,7 @@ body {
   function handlePointerDown(evt) {
     if (!boardCanvas) return;
     if (evt.pointerType === "touch") return; /* tablet: we use touch handlers instead */
-    if (typeof evt.preventDefault === "function") evt.preventDefault();
+    evt.preventDefault();
     try { boardCanvas.setPointerCapture(evt.pointerId); } catch (_) {}
 
     if (currentTool === "time") {
@@ -6311,7 +6298,7 @@ body {
       }
       pages[currentPageIndex].strokes.push(activeStroke);
     } else if (currentTool === "text") {
-      if (typeof evt.preventDefault === "function") evt.preventDefault();
+      evt.preventDefault();
       const point = getCanvasPoint(evt);
       const page = pages[currentPageIndex];
       if (!page) return;
@@ -6319,7 +6306,7 @@ body {
       pushUndo();
       showInlineTextInput(point);
     } else if (currentTool === "notes") {
-      if (typeof evt.preventDefault === "function") evt.preventDefault();
+      evt.preventDefault();
       const point = getCanvasPoint(evt);
       const page = pages[currentPageIndex];
       if (!page) return;
@@ -6611,7 +6598,6 @@ body {
           dragTextOriginals = null;
           if (propertiesContent) handleToolSelection("select");
         } else {
-          const wasAlreadyOnlySelection = selectedTexts.length === 1 && selectedTexts[0] === textHit.item;
           const isDoubleTap = selectedTexts.length === 1 && selectedTexts[0] === textHit.item &&
             (Date.now() - lastTextTap.time) < 450 && lastTextTap.item === textHit.item;
           lastTextTap = { time: Date.now(), item: textHit.item };
@@ -6627,11 +6613,7 @@ body {
           }
           const anyLockedText = selectedShapes.some((s) => s.locked) || selectedTexts.some((t) => t.locked);
           if (!anyLockedText) {
-            const onlyText = selectedShapes.length === 0 && selectedWidgets.length === 0;
-            const deferCoarseUndo = prefersCoarsePointer() && onlyText && wasAlreadyOnlySelection &&
-              selectedTexts.length === 1 && selectedTexts[0] === textHit.item;
-            if (!deferCoarseUndo) pushUndo();
-            else coarseTextDragDeferredUndo = true;
+            pushUndo();
             isDrawing = true;
             isDraggingShape = true;
             dragShapeStartPoint = point;
@@ -6667,7 +6649,7 @@ body {
   function handlePointerMove(evt) {
     if (evt.pointerType === "touch") return; /* tablet: we use touch handlers instead */
     if (!isDrawing) return;
-    if (typeof evt.preventDefault === "function") evt.preventDefault();
+    evt.preventDefault();
     if (resizeState && currentTool === "select") {
       const point = getCanvasPoint(evt);
       const { kind } = resizeState;
@@ -6845,14 +6827,6 @@ body {
       updateBoardAppearance();
     } else if (currentTool === "select" && isDraggingShape && dragShapeStartPoint && (selectedShapes.length || selectedTexts.length)) {
       const point = getCanvasPoint(evt);
-      if (coarseTextDragDeferredUndo && selectedShapes.length === 0 && selectedTexts.length > 0) {
-        const ddx = point.x - dragShapeStartPoint.x;
-        const ddy = point.y - dragShapeStartPoint.y;
-        if (ddx * ddx + ddy * ddy > 144) {
-          pushUndo();
-          coarseTextDragDeferredUndo = false;
-        }
-      }
       const dx = point.x - dragShapeStartPoint.x;
       const dy = point.y - dragShapeStartPoint.y;
       if (dragShapeOriginals) {
@@ -6907,23 +6881,6 @@ body {
     if (!boardCanvas) return;
     if (evt.pointerType === "touch") return; /* tablet: we use touch handlers instead */
     try { boardCanvas.releasePointerCapture(evt.pointerId); } catch (_) {}
-    if (coarseTextDragDeferredUndo && currentTool === "select" && isDraggingShape && dragShapeStartPoint &&
-        selectedTexts.length === 1 && selectedShapes.length === 0 && dragTextOriginals && dragTextOriginals.length === 1) {
-      const end = getCanvasPoint(evt);
-      const ddx = end.x - dragShapeStartPoint.x;
-      const ddy = end.y - dragShapeStartPoint.y;
-      if (ddx * ddx + ddy * ddy <= 144) {
-        const t = selectedTexts[0];
-        const o = dragTextOriginals[0];
-        if (t && o) {
-          t.x = o.x;
-          t.y = o.y;
-        }
-        openEditTextInput(t);
-        updateBoardAppearance();
-      }
-      coarseTextDragDeferredUndo = false;
-    }
     if (resizeState && currentTool === "select") {
       resizeState = null;
       isDrawing = false;
@@ -7355,15 +7312,7 @@ body {
   });
 
   function syntheticPointerEvt(touch) {
-    return {
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-      pointerId: touch.identifier,
-      pointerType: "",
-      shiftKey: false,
-      preventDefault() {},
-      stopPropagation() {},
-    };
+    return { clientX: touch.clientX, clientY: touch.clientY, pointerId: touch.identifier };
   }
   if (boardCanvas) {
     boardCanvas.addEventListener("pointerdown", handlePointerDown);
