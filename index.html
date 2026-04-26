@@ -1708,6 +1708,9 @@
               <input type="search" id="archive-search" placeholder="Topic, subject, grade, worksheet, live quiz…" data-i18n-placeholder="phArchiveSearch" autocomplete="off" />
             </div>
             <div class="flex-row" style="margin-top:0.75rem">
+              <button type="button" id="btn-archive-export" class="btn btn-secondary btn-small" data-i18n="archiveExport">Export archive</button>
+              <button type="button" id="btn-archive-import" class="btn btn-secondary btn-small" data-i18n="archiveImport">Import archive</button>
+              <input type="file" id="archive-import-file" accept=".json,application/json" style="display:none" />
               <button type="button" id="btn-archive-clear" class="btn btn-danger btn-small" data-i18n="archiveClear">Clear archive</button>
               <span class="status muted" id="archive-status"></span>
             </div>
@@ -2459,6 +2462,9 @@
         archiveSearch: document.getElementById('archive-search'),
         archiveList: document.getElementById('archive-list'),
         archiveStatus: document.getElementById('archive-status'),
+        btnArchiveExport: document.getElementById('btn-archive-export'),
+        btnArchiveImport: document.getElementById('btn-archive-import'),
+        archiveImportFile: document.getElementById('archive-import-file'),
         btnArchiveClear: document.getElementById('btn-archive-clear'),
         contentClass: document.getElementById('content-class'),
         contentSubject: document.getElementById('content-subject'),
@@ -3443,9 +3449,7 @@
           var hay = [item.label, item.type, item.source, item.content, meta.subject, meta.chapter, meta.topic, meta.grade, meta.board, meta.difficulty].join(' ').toLowerCase();
           return hay.indexOf(q) !== -1;
         });
-        if (els.archiveStatus) {
-          els.archiveStatus.textContent = items.length ? (shown.length + ' of ' + items.length + ' item(s)') : 'No archived items yet.';
-        }
+        if (els.archiveStatus) els.archiveStatus.textContent = '';
         if (!shown.length) {
           els.archiveList.innerHTML = '<div class="card"><p class="muted" style="margin:0;">No archived content, worksheets or live quizzes found.</p></div>';
           return;
@@ -3980,6 +3984,57 @@
         setStudentProfiles(merged);
         renderStudentsPage();
         toast('Students CSV imported.', 'success');
+      }
+
+      function normalizeArchiveItem(x) {
+        var it = x && typeof x === 'object' ? x : {};
+        var out = {
+          id: (it.id || '').toString() || ('a_' + Math.random().toString(36).slice(2) + '_' + Date.now()),
+          type: (it.type || 'worksheet').toString(),
+          label: (it.label || '').toString(),
+          createdAt: (it.createdAt || '').toString(),
+          meta: it.meta && typeof it.meta === 'object' ? it.meta : {},
+          payload: it.payload
+        };
+        return out;
+      }
+
+      function exportArchiveToJson() {
+        var items = getArchiveList() || [];
+        var payload = {
+          schema: 'tutor_hub_archive_export_v1',
+          exportedAt: new Date().toISOString(),
+          items: items
+        };
+        downloadTextFile('tutor_hub_archive_export.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+        toast('Archive exported.', 'success');
+      }
+
+      function importArchiveFromJsonText(jsonText) {
+        var obj = JSON.parse(String(jsonText || ''));
+        var incoming = [];
+        if (Array.isArray(obj)) incoming = obj;
+        else if (obj && typeof obj === 'object' && Array.isArray(obj.items)) incoming = obj.items;
+        else throw new Error('Invalid archive file.');
+
+        var normalized = incoming.map(normalizeArchiveItem);
+        var existing = getArchiveList() || [];
+
+        var modeReplace = confirm('OK = Replace current Archive with imported data.\nCancel = Merge with existing Archive.');
+        var merged = [];
+
+        if (modeReplace) {
+          merged = normalized;
+        } else {
+          var byId = {};
+          existing.forEach(function (x) { if (x && x.id) byId[x.id] = x; });
+          normalized.forEach(function (x) { if (x && x.id) byId[x.id] = x; });
+          Object.keys(byId).forEach(function (k) { merged.push(byId[k]); });
+        }
+
+        setArchiveList(merged);
+        renderArchiveList();
+        toast('Archive imported.', 'success');
       }
 
       function studentLatestFeeStatus(profile) {
@@ -6777,6 +6832,29 @@
       });
       if (els.studentsSearch) els.studentsSearch.addEventListener('input', renderStudentsList);
       if (els.archiveSearch) els.archiveSearch.addEventListener('input', function () { renderArchiveList(); });
+      if (els.btnArchiveExport) els.btnArchiveExport.addEventListener('click', exportArchiveToJson);
+      if (els.btnArchiveImport && els.archiveImportFile) {
+        els.btnArchiveImport.addEventListener('click', function () { els.archiveImportFile.click(); });
+        els.archiveImportFile.addEventListener('change', function () {
+          var file = els.archiveImportFile.files && els.archiveImportFile.files[0];
+          if (!file) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            try {
+              importArchiveFromJsonText(String(reader.result || ''));
+            } catch (e) {
+              toast('Archive import failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+            } finally {
+              els.archiveImportFile.value = '';
+            }
+          };
+          reader.onerror = function () {
+            toast('Could not read archive file.', 'error');
+            els.archiveImportFile.value = '';
+          };
+          reader.readAsText(file);
+        });
+      }
       if (els.btnArchiveClear) {
         els.btnArchiveClear.addEventListener('click', function () {
           if (!confirm('Do you really want to delete all archived content, worksheets and live quizzes from this browser?')) return;
@@ -6838,7 +6916,7 @@
         phNoteTitle: 'e.g. Class 7 fractions follow-up', phNoteClass: 'e.g. Class 7A', phNoteBody: 'Write observations, homework, student doubts, or next class plan...', phReminderTitle: 'e.g. Unit test revision', phReminderDetails: 'Add timing, syllabus, students to follow up with, or preparation notes...', optClass: 'Class', optExam: 'Exam', optQuiz: 'Quiz', optHomework: 'Homework', optOther: 'Other',
         studentsTitle: 'Students', studentsSub: 'Create student profiles and track daily attendance, worksheet dates and scores, and monthly fees.', studentFormTitle: 'Attendance & fees', studentName: 'Student name', studentClass: 'Class / batch', studentMonth: 'Month', studentFeeAmount: 'Monthly fee amount', studentAttended: 'Classes attended', studentTotalClasses: 'Total classes', studentFeeStatus: 'Fee status', feePaid: 'Paid', feePending: 'Pending', feePartial: 'Partial', studentNotes: 'Notes', studentSave: 'Save record', studentReset: 'Reset', studentRecordsTitle: 'Saved records', studentSearch: 'Search',
         phStudentName: 'e.g. Aarav Sharma', phStudentClass: 'e.g. Class 7A', phStudentFee: 'e.g. 1500', phStudentAttended: 'e.g. 10', phStudentTotal: 'e.g. 12', phStudentNotes: 'Add payment date, balance amount, attendance remarks, etc.', phStudentSearch: 'Student, class, month, fee status...',
-        archiveTitle: 'Archive', archiveSub: 'Saved worksheets and live quizzes on this device.', archiveSearch: 'Search archive', archiveClear: 'Clear archive', phArchiveSearch: 'Topic, subject, grade, worksheet, live quiz…',
+        archiveTitle: 'Archive', archiveSub: 'Saved worksheets and live quizzes on this device.', archiveSearch: 'Search archive', archiveExport: 'Export archive', archiveImport: 'Import archive', archiveClear: 'Clear archive', phArchiveSearch: 'Topic, subject, grade, worksheet, live quiz…',
         bankSub: 'Saved quizzes on this device. Search by topic or label.', bankSearch: 'Search', bankSaved: 'Saved quizzes', btnLoad: 'Load', btnDelete: 'Delete', phBankSearch: 'Topic, subject, grade…',
         setTitle: 'Settings', setSub: 'Defaults and behaviour for this browser.', settingsAiTitle: 'AI model & API keys', settingsAiHint: 'Configure AI here once. It is used by Create Worksheet and Live Quiz. Keys are stored in localStorage on this device.', settingsGeminiKey: 'Google Gemini API key', settingsGeminiHint: 'Get a key from Google AI Studio.', settingsOpenAiKey: 'OpenAI API key (optional)', settingsOpenAiHint: 'Only needed if you choose OpenAI as the generator.', settingsSharedAi: 'Shared AI generator', settingsQuestionGenerator: 'Question generator', settingsGeminiModel: 'Gemini model', settingsOpenAiModel: 'OpenAI model', settingsOpenAiEndpoint: 'Uses https://api.openai.com/v1/chat/completions', settingsContentDefaults: 'Create Content defaults', settingsWorksheetDefaults: 'Create Worksheet defaults', settingsLiveDefaults: 'Live Quiz defaults', settingsDefaultClass: 'Default class', settingsDefaultSubject: 'Default subject', settingsDefaultBoard: 'Default board', settingsQuestions: 'Questions', phGeminiModel: 'e.g. gemini-2.0-flash', phOpenAiModel: 'e.g. gpt-4.1-mini',
         setAutosave: 'Auto-save draft quiz after generate', setLqAutosave: 'Auto-save draft live quiz after generate', btnSaveSet: 'Save settings',
@@ -6901,7 +6979,7 @@
         phNoteTitle: 'जैसे Class 7 fractions follow-up', phNoteClass: 'जैसे Class 7A', phNoteBody: 'Observations, homework, student doubts या अगली class plan लिखें...', phReminderTitle: 'जैसे Unit test revision', phReminderDetails: 'Timing, syllabus, students follow-up या preparation notes जोड़ें...', optClass: 'क्लास', optExam: 'परीक्षा', optQuiz: 'क्विज़', optHomework: 'होमवर्क', optOther: 'अन्य',
         studentsTitle: 'स्टूडेंट्स', studentsSub: 'Student profiles बनाएँ और daily attendance, worksheet dates/scores और monthly fees track करें।', studentFormTitle: 'Attendance और fees', studentName: 'Student name', studentClass: 'Class / batch', studentMonth: 'Month', studentFeeAmount: 'Monthly fee amount', studentAttended: 'Classes attended', studentTotalClasses: 'Total classes', studentFeeStatus: 'Fee status', feePaid: 'Paid', feePending: 'Pending', feePartial: 'Partial', studentNotes: 'Notes', studentSave: 'Record save करें', studentReset: 'Reset', studentRecordsTitle: 'Saved records', studentSearch: 'Search',
         phStudentName: 'जैसे Aarav Sharma', phStudentClass: 'जैसे Class 7A', phStudentFee: 'जैसे 1500', phStudentAttended: 'जैसे 10', phStudentTotal: 'जैसे 12', phStudentNotes: 'Payment date, balance amount, attendance remarks आदि जोड़ें...', phStudentSearch: 'Student, class, month, fee status...',
-        archiveTitle: 'आर्काइव', archiveSub: 'इस डिवाइस पर सेव वर्कशीट और लाइव क्विज़।', archiveSearch: 'आर्काइव खोजें', archiveClear: 'आर्काइव साफ़ करें', phArchiveSearch: 'टॉपिक, विषय, ग्रेड, वर्कशीट, लाइव क्विज़…',
+        archiveTitle: 'आर्काइव', archiveSub: 'इस डिवाइस पर सेव वर्कशीट और लाइव क्विज़।', archiveSearch: 'आर्काइव खोजें', archiveExport: 'आर्काइव एक्सपोर्ट', archiveImport: 'आर्काइव इम्पोर्ट', archiveClear: 'आर्काइव साफ़ करें', phArchiveSearch: 'टॉपिक, विषय, ग्रेड, वर्कशीट, लाइव क्विज़…',
         bankSub: 'इस डिवाइस पर सेव क्विज़। टॉपिक या label से खोजें।', bankSearch: 'खोजें', bankSaved: 'सेव क्विज़', btnLoad: 'लोड करें', btnDelete: 'हटाएँ', phBankSearch: 'टॉपिक, विषय, ग्रेड…',
         setTitle: 'सेटिंग्स', setSub: 'इस ब्राउज़र के defaults और व्यवहार।', settingsAiTitle: 'AI मॉडल और API keys', settingsAiHint: 'AI यहाँ एक बार configure करें। यह Create Worksheet और Live Quiz में इस्तेमाल होगा। Keys इसी device के localStorage में save होती हैं।', settingsGeminiKey: 'Google Gemini API key', settingsGeminiHint: 'Google AI Studio से key लें।', settingsOpenAiKey: 'OpenAI API key (वैकल्पिक)', settingsOpenAiHint: 'सिर्फ तब चाहिए जब आप generator में OpenAI चुनें।', settingsSharedAi: 'Shared AI generator', settingsQuestionGenerator: 'Question generator', settingsGeminiModel: 'Gemini model', settingsOpenAiModel: 'OpenAI model', settingsOpenAiEndpoint: 'https://api.openai.com/v1/chat/completions इस्तेमाल करता है', settingsContentDefaults: 'Create Content defaults', settingsWorksheetDefaults: 'Create Worksheet defaults', settingsLiveDefaults: 'Live Quiz defaults', settingsDefaultClass: 'डिफ़ॉल्ट कक्षा', settingsDefaultSubject: 'डिफ़ॉल्ट विषय', settingsDefaultBoard: 'डिफ़ॉल्ट बोर्ड', settingsQuestions: 'प्रश्न', phGeminiModel: 'जैसे gemini-2.0-flash', phOpenAiModel: 'जैसे gpt-4.1-mini',
         setAutosave: 'बनने के बाद draft quiz अपने-आप save करें', setLqAutosave: 'बनने के बाद लाइव क्विज़ ड्राफ्ट अपने-आप सेव करें', btnSaveSet: 'सेटिंग्स सेव करें',
